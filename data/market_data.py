@@ -52,7 +52,7 @@ class StockQuote:
 
 def get_stock_quote(symbol: str) -> Optional[StockQuote]:
     """
-    Get current stock quote
+    Get current stock quote with intelligent fallback
 
     Args:
         symbol: Stock ticker symbol
@@ -61,9 +61,18 @@ def get_stock_quote(symbol: str) -> Optional[StockQuote]:
         StockQuote object or None if failed
     """
     try:
+        # Try yfinance first if enabled
         if settings.USE_YFINANCE:
-            return _get_yfinance_quote(symbol)
-        elif settings.ALPHA_VANTAGE_API_KEY:
+            quote = _get_yfinance_quote(symbol)
+            if quote:
+                return quote
+            # If yfinance fails, try Alpha Vantage as fallback
+            elif hasattr(settings, 'ALPHA_VANTAGE_API_KEY') and settings.ALPHA_VANTAGE_API_KEY and settings.ALPHA_VANTAGE_API_KEY != 'your_alpha_vantage_key':
+                logger.info(f"yfinance failed for {symbol}, trying Alpha Vantage fallback...")
+                return _get_alpha_vantage_quote(symbol)
+
+        # If yfinance not enabled, try Alpha Vantage
+        elif hasattr(settings, 'ALPHA_VANTAGE_API_KEY') and settings.ALPHA_VANTAGE_API_KEY and settings.ALPHA_VANTAGE_API_KEY != 'your_alpha_vantage_key':
             return _get_alpha_vantage_quote(symbol)
         else:
             logger.error("No data source configured")
