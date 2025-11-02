@@ -43,6 +43,7 @@ WHATSAPP_WEB_WAIT_TIME = int(os.getenv('WHATSAPP_WEB_WAIT_TIME', '15'))
 WHATSAPP_WEB_CLOSE_TAB = os.getenv('WHATSAPP_WEB_CLOSE_TAB', 'true').lower() == 'true'
 
 # ===== FINANCIAL DATA API KEYS =====
+POLYGON_API_KEY = os.getenv('POLYGON_API_KEY')  # Polygon.io (massive.com)
 ALPHA_VANTAGE_API_KEY = os.getenv('ALPHA_VANTAGE_API_KEY')
 NEWS_API_KEY = os.getenv('NEWS_API_KEY')
 FINNHUB_API_KEY = os.getenv('FINNHUB_API_KEY')
@@ -144,6 +145,7 @@ def print_config_summary():
     print(f"   Max items: {MAX_NEWS_ITEMS}")
 
     print(f"\n🔌 DATA SOURCES:")
+    print(f"   Polygon.io: {'✓' if POLYGON_API_KEY else '✗'}")
     print(f"   Yahoo Finance: {'✓' if USE_YFINANCE else '✗'}")
     print(f"   Alpha Vantage: {'✓' if ALPHA_VANTAGE_API_KEY else '✗'}")
     print(f"   Finnhub: {'✓' if FINNHUB_API_KEY else '✗'}")

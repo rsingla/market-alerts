@@ -6,6 +6,7 @@ schedule==1.2.0
 # Financial Data
 yfinance==0.2.33
 alpha-vantage==2.3.1
+polygon-api-client==1.16.3        # Polygon.io / massive.com
 
 # News Aggregation
 feedparser==6.0.10

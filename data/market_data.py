@@ -53,6 +53,7 @@ class StockQuote:
 def get_stock_quote(symbol: str) -> Optional[StockQuote]:
     """
     Get current stock quote with intelligent fallback
+    Priority: Polygon.io > yfinance > Alpha Vantage
 
     Args:
         symbol: Stock ticker symbol
@@ -61,7 +62,17 @@ def get_stock_quote(symbol: str) -> Optional[StockQuote]:
         StockQuote object or None if failed
     """
     try:
-        # Try yfinance first if enabled
+        # First, try Polygon.io if configured (most reliable, no rate limits on paid plans)
+        if hasattr(settings, 'POLYGON_API_KEY') and settings.POLYGON_API_KEY and settings.POLYGON_API_KEY != 'your_polygon_api_key':
+            logger.debug(f"Trying Polygon.io for {symbol}...")
+            quote = _get_polygon_quote(symbol)
+            if quote:
+                logger.debug(f"✓ Polygon.io success for {symbol}")
+                return quote
+            else:
+                logger.info(f"Polygon failed for {symbol}, trying fallbacks...")
+
+        # Try yfinance next if enabled
         if settings.USE_YFINANCE:
             quote = _get_yfinance_quote(symbol)
             if quote:
@@ -123,6 +134,73 @@ def _get_alpha_vantage_quote(symbol: str) -> Optional[StockQuote]:
 
     except Exception as e:
         logger.error(f"Alpha Vantage error for {symbol}: {e}")
+        return None
+
+
+def _get_polygon_quote(symbol: str) -> Optional[StockQuote]:
+    """Fetch quote using Polygon.io (massive.com)"""
+    try:
+        from polygon import RESTClient
+
+        # Initialize Polygon client
+        client = RESTClient(api_key=settings.POLYGON_API_KEY)
+
+        # Get previous day's close for comparison
+        aggs = client.get_previous_close_agg(ticker=symbol)
+
+        if not aggs or len(aggs) == 0:
+            logger.warning(f"No Polygon data for {symbol}")
+            return None
+
+        prev_day = aggs[0]
+
+        # Get snapshot for current/latest price
+        try:
+            snapshot = client.get_snapshot_ticker(ticker='stocks', symbol=symbol)
+
+            if snapshot and snapshot.ticker:
+                ticker_data = snapshot.ticker
+
+                # Calculate change from previous close
+                current_price = ticker_data.day.close if ticker_data.day and ticker_data.day.close else prev_day.close
+                prev_close = prev_day.close
+                change = current_price - prev_close
+                change_percent = (change / prev_close) * 100 if prev_close else 0
+
+                # Convert Polygon format to our format
+                quote_data = {
+                    'regularMarketPrice': current_price,
+                    'regularMarketChange': change,
+                    'regularMarketChangePercent': change_percent,
+                    'regularMarketVolume': ticker_data.day.volume if ticker_data.day else prev_day.volume,
+                    'averageDailyVolume10Day': ticker_data.prevDay.volume if ticker_data.prevDay else 0,
+                    'regularMarketDayHigh': ticker_data.day.high if ticker_data.day else prev_day.high,
+                    'regularMarketDayLow': ticker_data.day.low if ticker_data.day else prev_day.low,
+                    'regularMarketPreviousClose': prev_close,
+                    'marketCap': 0,  # Polygon doesn't provide market cap in snapshot
+                }
+
+                return StockQuote(symbol, quote_data)
+        except Exception as snapshot_error:
+            logger.debug(f"Snapshot failed for {symbol}, using previous close only: {snapshot_error}")
+
+        # Fallback to previous day data if snapshot fails
+        quote_data = {
+            'regularMarketPrice': prev_day.close,
+            'regularMarketChange': 0,
+            'regularMarketChangePercent': 0,
+            'regularMarketVolume': prev_day.volume,
+            'averageDailyVolume10Day': prev_day.volume,
+            'regularMarketDayHigh': prev_day.high,
+            'regularMarketDayLow': prev_day.low,
+            'regularMarketPreviousClose': prev_day.close,
+            'marketCap': 0,
+        }
+
+        return StockQuote(symbol, quote_data)
+
+    except Exception as e:
+        logger.error(f"Polygon error for {symbol}: {e}")
         return None
 
 
