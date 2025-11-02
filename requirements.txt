@@ -11,8 +11,12 @@ alpha-vantage==2.3.1
 feedparser==6.0.10
 beautifulsoup4==4.12.2
 
-# WhatsApp/Notifications
-twilio==8.10.0
+# Notifications - Multiple Channels
+twilio==8.10.0                    # WhatsApp via Twilio
+sib-api-v3-sdk==7.6.0            # Email via Brevo/Sendinblue
+python-telegram-bot==22.5         # Telegram notifications
+pywhatkit==5.4                    # WhatsApp Web automation
+pyautogui==0.9.54                 # GUI automation for pywhatkit
 
 # Data Processing
 pandas==2.1.4

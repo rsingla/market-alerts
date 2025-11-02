@@ -16,11 +16,31 @@ else:
     print(f"⚠️  No .env file found at {env_path}")
     print("   Using environment variables or defaults")
 
+# ===== EMAIL NOTIFICATIONS (Brevo/Sendinblue) =====
+BREVO_API_KEY = os.getenv('BREVO_API_KEY')
+SENDER_EMAIL = os.getenv('SENDER_EMAIL', 'alerts@marketalerts.com')
+SENDER_NAME = os.getenv('SENDER_NAME', 'Market Alerts')
+RECIPIENT_EMAIL = os.getenv('RECIPIENT_EMAIL')
+
+# ===== TELEGRAM SETTINGS =====
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+
+# ===== SIGNAL SETTINGS =====
+SIGNAL_SENDER_NUMBER = os.getenv('SIGNAL_SENDER_NUMBER')
+SIGNAL_RECIPIENT_NUMBER = os.getenv('SIGNAL_RECIPIENT_NUMBER')
+SIGNAL_CLI_PATH = os.getenv('SIGNAL_CLI_PATH', 'signal-cli')
+
 # ===== TWILIO (WhatsApp) SETTINGS =====
 TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
 TWILIO_WHATSAPP_FROM = os.getenv('TWILIO_WHATSAPP_FROM', 'whatsapp:+14155238886')
 TWILIO_WHATSAPP_TO = os.getenv('TWILIO_WHATSAPP_TO')
+
+# ===== WHATSAPP WEB SETTINGS =====
+WHATSAPP_WEB_RECIPIENT = os.getenv('WHATSAPP_WEB_RECIPIENT')
+WHATSAPP_WEB_WAIT_TIME = int(os.getenv('WHATSAPP_WEB_WAIT_TIME', '15'))
+WHATSAPP_WEB_CLOSE_TAB = os.getenv('WHATSAPP_WEB_CLOSE_TAB', 'true').lower() == 'true'
 
 # ===== FINANCIAL DATA API KEYS =====
 ALPHA_VANTAGE_API_KEY = os.getenv('ALPHA_VANTAGE_API_KEY')
@@ -125,9 +145,21 @@ def print_config_summary():
     print(f"   News API: {'✓' if NEWS_API_KEY else '✗'}")
 
     print(f"\n📱 NOTIFICATIONS:")
+    print(f"   Email (Brevo): {'✓' if BREVO_API_KEY else '✗'}")
+    if RECIPIENT_EMAIL:
+        print(f"   Email to: {RECIPIENT_EMAIL}")
+    print(f"   Telegram: {'✓' if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID else '✗'}")
+    if TELEGRAM_CHAT_ID:
+        print(f"   Telegram chat: {TELEGRAM_CHAT_ID}")
+    print(f"   Signal: {'✓' if SIGNAL_SENDER_NUMBER and SIGNAL_RECIPIENT_NUMBER else '✗'}")
+    if SIGNAL_RECIPIENT_NUMBER:
+        print(f"   Signal to: {SIGNAL_RECIPIENT_NUMBER}")
     print(f"   WhatsApp (Twilio): {'✓' if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN else '✗'}")
     if TWILIO_WHATSAPP_TO:
-        print(f"   Recipient: {TWILIO_WHATSAPP_TO}")
+        print(f"   WhatsApp to: {TWILIO_WHATSAPP_TO}")
+    print(f"   WhatsApp Web: {'✓' if WHATSAPP_WEB_RECIPIENT else '✗'}")
+    if WHATSAPP_WEB_RECIPIENT:
+        print(f"   WhatsApp Web to: {WHATSAPP_WEB_RECIPIENT}")
 
     # Validation
     errors, warnings = validate_config()
