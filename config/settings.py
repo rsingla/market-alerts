@@ -84,6 +84,11 @@ CACHE_DURATION = int(os.getenv('CACHE_DURATION', '300'))  # 5 minutes
 LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO')
 LOG_FILE = os.getenv('LOG_FILE', 'logs/market_alerts.log')
 
+# ===== AI ANALYSIS (DeepSeek) =====
+DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')
+DEEPSEEK_API_URL = os.getenv('DEEPSEEK_API_URL', 'https://api.deepseek.com/v1/chat/completions')
+DEEPSEEK_MODEL = os.getenv('DEEPSEEK_MODEL', 'deepseek-chat')
+
 # ===== VALIDATION =====
 def validate_config():
     """Validate critical configuration"""

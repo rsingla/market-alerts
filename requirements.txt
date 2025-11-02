@@ -29,6 +29,7 @@ plotly==5.18.0
 # Utilities
 pytz==2023.3
 python-dateutil==2.8.2
+scipy==1.11.4                     # For technical indicators
 
 # Logging
 loguru==0.7.2

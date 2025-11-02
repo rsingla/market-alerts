@@ -8,7 +8,7 @@ import sys
 import signal
 import time
 from config import settings
-from scheduler import start_scheduler, stop_scheduler, get_scheduler
+from scheduler import start_scheduler, stop_scheduler
 from utils.logger import logger
 
 
@@ -24,8 +24,6 @@ def main():
     logger.info("\n" + "="*60)
     logger.info("MARKET ALERTS - STARTING")
     logger.info("="*60 + "\n")
-
-    scheduler = get_scheduler()
 
     # Handle shutdown gracefully
     def signal_handler(sig, frame):
