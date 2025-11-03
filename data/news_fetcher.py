@@ -41,15 +41,20 @@ RSS_FEEDS = {
     'MarketWatch': 'https://feeds.marketwatch.com/marketwatch/topstories/',
     'Seeking Alpha': 'https://seekingalpha.com/feed.xml',
     'Yahoo Finance': 'https://finance.yahoo.com/news/rssindex',
+    'Bloomberg': 'https://www.bloomberg.com/markets',
+    'Financial Times': 'https://www.ft.com/markets',
+    'Barrons': 'https://www.barrons.com/articles',
+    'Investopedia': 'https://www.investopedia.com/news/',
 }
 
 
-def get_market_news(max_items: Optional[int] = None) -> List[NewsArticle]:
+def get_market_news(max_items: Optional[int] = None, filter_keywords: bool = False) -> List[NewsArticle]:
     """
     Get general market news from multiple sources
 
     Args:
         max_items: Maximum number of articles (uses settings.MAX_NEWS_ITEMS if None)
+        filter_keywords: If True, filter articles by NEWS_KEYWORDS (default False for broad coverage)
 
     Returns:
         List of NewsArticle objects
@@ -70,9 +75,12 @@ def get_market_news(max_items: Optional[int] = None) -> List[NewsArticle]:
     # Sort by published date (newest first)
     articles.sort(key=lambda x: x.published if x.published else datetime.min, reverse=True)
 
-    # Filter by keywords if configured
-    if settings.NEWS_KEYWORDS:
+    # Only filter by keywords if explicitly requested (for broad market coverage by default)
+    if filter_keywords and settings.NEWS_KEYWORDS:
+        logger.info(f"Applying keyword filter: {settings.NEWS_KEYWORDS}")
         articles = _filter_by_keywords(articles, settings.NEWS_KEYWORDS)
+    else:
+        logger.info(f"Showing all market news (no keyword filtering)")
 
     return articles[:max_items]
 
