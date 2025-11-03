@@ -14,6 +14,9 @@ from data.technical_indicators import get_technical_analysis
 from ai import get_analyzer
 from ai.alpaca_trading_integration import get_alpaca_integration
 from alerts.alert_engine import AlertEngine
+from alerts.advanced_alert_engine import get_advanced_engine
+from alerts.alert_rules import get_rules_manager, AlertRule, RuleType, RuleCondition
+from alerts.alert_templates import AlertTemplates
 from notifications import WhatsAppSender
 from config import settings
 
@@ -165,6 +168,12 @@ if 'alpaca_integration' not in st.session_state:
 
 if 'ai_evaluation_analysis' not in st.session_state:
     st.session_state.ai_evaluation_analysis = None
+
+if 'advanced_engine' not in st.session_state:
+    st.session_state.advanced_engine = get_advanced_engine()
+
+if 'rules_manager' not in st.session_state:
+    st.session_state.rules_manager = get_rules_manager()
 
 # Initialize other notification senders for testing
 if 'telegram_sender' not in st.session_state:
@@ -872,6 +881,257 @@ def show_test_panel():
         st.text(f"WhatsApp: {'✓' if settings.TWILIO_ACCOUNT_SID else '✗'}")
 
 
+def show_advanced_alerts_page():
+    """Display Advanced Alerts Management page"""
+    st.subheader("🚨 Advanced Alert System")
+    st.caption("Manage custom alert rules and view alert statistics")
+
+    # Get statistics
+    rules_manager = st.session_state.rules_manager
+    advanced_engine = st.session_state.advanced_engine
+
+    stats = advanced_engine.get_stats()
+
+    # Display statistics
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Total Rules", stats['enabled_rules'])
+    with col2:
+        st.metric("Symbols Monitored", stats['symbols_with_rules'])
+    with col3:
+        st.metric("Cached Alerts", stats['cached_alerts'])
+    with col4:
+        scheduler_info = "✓ Running (30min)" if True else "✗ Stopped"
+        st.metric("Scheduler", scheduler_info)
+
+    st.markdown("---")
+
+    # Tabs for different sections
+    tab1, tab2, tab3 = st.tabs(["📋 All Rules", "➕ Add New Rule", "📊 Alert Templates"])
+
+    with tab1:
+        # Display all rules
+        st.markdown("### Current Alert Rules")
+
+        all_rules = rules_manager.get_all_rules()
+
+        if not all_rules:
+            st.info("No alert rules configured yet. Use the 'Add New Rule' tab to create your first rule!")
+        else:
+            # Create DataFrame for rules
+            rules_data = []
+            for rule in all_rules:
+                status = "🟢 Enabled" if rule.enabled else "🔴 Disabled"
+                rules_data.append({
+                    'ID': rule.rule_id,
+                    'Symbol': rule.symbol,
+                    'Type': rule.rule_type.value,
+                    'Condition': f"{rule.condition.value} {rule.threshold}",
+                    'Status': status,
+                    'Triggers': rule.trigger_count,
+                    'Last Triggered': rule.last_triggered if rule.last_triggered else "Never",
+                    'Description': rule.description
+                })
+
+            df = pd.DataFrame(rules_data)
+            st.dataframe(df, use_container_width=True, hide_index=True)
+
+            st.markdown("---")
+            st.markdown("### Manage Rules")
+
+            # Rule management
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                rule_ids = [r.rule_id for r in all_rules]
+                selected_rule_id = st.selectbox("Select Rule", rule_ids)
+
+            with col2:
+                st.write("")  # Spacing
+                st.write("")  # Spacing
+                if st.button("🗑️ Delete", use_container_width=True, type="secondary"):
+                    if rules_manager.remove_rule(selected_rule_id):
+                        st.success(f"✓ Deleted rule: {selected_rule_id}")
+                        st.rerun()
+                    else:
+                        st.error(f"✗ Failed to delete rule")
+
+            # Show selected rule details
+            if selected_rule_id:
+                selected_rule = rules_manager.get_rule(selected_rule_id)
+                if selected_rule:
+                    with st.expander("📝 Rule Details", expanded=True):
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.write(f"**Symbol:** {selected_rule.symbol}")
+                            st.write(f"**Type:** {selected_rule.rule_type.value}")
+                            st.write(f"**Condition:** {selected_rule.condition.value}")
+                            st.write(f"**Threshold:** {selected_rule.threshold}")
+                        with col2:
+                            st.write(f"**Enabled:** {'Yes' if selected_rule.enabled else 'No'}")
+                            st.write(f"**Triggers:** {selected_rule.trigger_count}")
+                            st.write(f"**Created:** {selected_rule.created_at}")
+                            st.write(f"**Last Triggered:** {selected_rule.last_triggered if selected_rule.last_triggered else 'Never'}")
+
+                        st.write(f"**Description:** {selected_rule.description}")
+
+                        # Toggle enable/disable
+                        if selected_rule.enabled:
+                            if st.button("⏸️ Disable Rule", use_container_width=True):
+                                if rules_manager.disable_rule(selected_rule_id):
+                                    st.success("✓ Rule disabled")
+                                    st.rerun()
+                        else:
+                            if st.button("▶️ Enable Rule", use_container_width=True):
+                                if rules_manager.enable_rule(selected_rule_id):
+                                    st.success("✓ Rule enabled")
+                                    st.rerun()
+
+    with tab2:
+        # Add new rule
+        st.markdown("### Create New Alert Rule")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            new_symbol = st.selectbox("Stock Symbol", settings.WATCHLIST, key="new_rule_symbol")
+            new_rule_type = st.selectbox(
+                "Alert Type",
+                [
+                    "price_threshold",
+                    "price_change_percent",
+                    "volume_spike",
+                    "rsi_level",
+                    "ma_crossover",
+                    "bollinger_breakout",
+                    "macd_signal",
+                    "breaking_news"
+                ],
+                key="new_rule_type"
+            )
+
+        with col2:
+            new_condition = st.selectbox(
+                "Condition",
+                ["above", "below", "crosses_above", "crosses_below", "greater_than", "less_than"],
+                key="new_condition"
+            )
+            new_threshold = st.number_input(
+                "Threshold Value",
+                min_value=0.0,
+                value=100.0,
+                step=0.1,
+                key="new_threshold"
+            )
+
+        new_description = st.text_input(
+            "Description (optional)",
+            placeholder="e.g., Alert when AAPL crosses above $200",
+            key="new_description"
+        )
+
+        if st.button("➕ Create Rule", type="primary", use_container_width=True):
+            # Generate rule ID
+            import time
+            rule_id = f"{new_symbol}_{new_rule_type}_{int(time.time())}"
+
+            # Create rule
+            new_rule = AlertRule(
+                rule_id=rule_id,
+                symbol=new_symbol,
+                rule_type=RuleType(new_rule_type),
+                condition=RuleCondition(new_condition),
+                threshold=new_threshold,
+                description=new_description if new_description else f"{new_symbol} {new_rule_type} rule"
+            )
+
+            if rules_manager.add_rule(new_rule):
+                st.success(f"✓ Created new rule: {rule_id}")
+                st.rerun()
+            else:
+                st.error("✗ Failed to create rule")
+
+    with tab3:
+        # Show alert templates
+        st.markdown("### Alert Message Templates")
+        st.caption("Preview how different alert types will look when sent")
+
+        template_type = st.selectbox(
+            "Select Template Type",
+            [
+                "Price Threshold",
+                "Price Change %",
+                "Volume Spike",
+                "RSI Level",
+                "MA Crossover",
+                "Bollinger Breakout",
+                "MACD Signal",
+                "Breaking News",
+                "Hourly Summary"
+            ]
+        )
+
+        # Show template preview based on selection
+        if template_type == "Price Threshold":
+            msg = AlertTemplates.price_threshold_alert("AAPL", 305.50, 300.00, "above")
+        elif template_type == "Price Change %":
+            msg = AlertTemplates.price_change_percent_alert("TSLA", 250.75, 4.5, "30-minute")
+        elif template_type == "Volume Spike":
+            msg = AlertTemplates.volume_spike_alert("MSFT", 420.30, 150000000, 50000000, 3.0)
+        elif template_type == "RSI Level":
+            msg = AlertTemplates.rsi_alert("GOOGL", 180.25, 28.5, "oversold")
+        elif template_type == "MA Crossover":
+            msg = AlertTemplates.ma_crossover_alert("SPY", 580.25, "SMA", 200, "above")
+        elif template_type == "Bollinger Breakout":
+            msg = AlertTemplates.bollinger_breakout_alert("NVDA", 850.75, "upper", 845.00)
+        elif template_type == "MACD Signal":
+            msg = AlertTemplates.macd_signal_alert("META", 520.30, 1.5, -0.5, "bullish")
+        elif template_type == "Breaking News":
+            msg = AlertTemplates.breaking_news_alert("AAPL", "Apple announces major acquisition", "Reuters", ["acquisition"])
+        else:  # Hourly Summary
+            sample_stats = {
+                'top_gainers': [
+                    {'symbol': 'NVDA', 'price': 850.75, 'change_pct': 4.5},
+                    {'symbol': 'TSLA', 'price': 250.30, 'change_pct': 3.2}
+                ],
+                'top_losers': [
+                    {'symbol': 'AAPL', 'price': 195.20, 'change_pct': -2.1}
+                ],
+                'total_symbols': 69,
+                'market_status': 'Open'
+            }
+            msg = AlertTemplates.hourly_summary(sample_stats)
+
+        # Display template
+        st.markdown("#### WhatsApp/Telegram Preview")
+        st.info(msg['whatsapp'])
+
+        with st.expander("📧 Email Preview"):
+            st.markdown(f"**Subject:** {msg.get('email_subject', 'N/A')}")
+            st.markdown(f"**Body:**\n\n{msg.get('email_body', 'N/A')}")
+
+    st.markdown("---")
+
+    # System status section
+    st.markdown("### 📊 System Status")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**Scheduler Information:**")
+        st.text("Event-Driven Alerts: Every 30 minutes")
+        st.text("Time-Based Summaries:")
+        st.text("  • Morning News: 8:00 AM ET")
+        st.text("  • Market Open: 9:35 AM ET")
+        st.text("  • Hourly: 10 AM, 11 AM, 1 PM, 2 PM, 3 PM ET")
+        st.text("  • Midday: 12:00 PM ET")
+        st.text("  • Market Close: 4:05 PM ET")
+
+    with col2:
+        st.markdown("**Alert Types Available:**")
+        for rule_type in RuleType:
+            st.text(f"  • {rule_type.value}")
+
+
 # Main app
 def main():
     st.title("📊 Market Alerts Dashboard")
@@ -887,7 +1147,7 @@ def main():
 
         page = st.radio(
             "Select Page",
-            ["📊 Market Overview", "🤖 AI Evaluation (11 Indicators)", "📈 Analysis & Testing"]
+            ["📊 Market Overview", "🤖 AI Evaluation (11 Indicators)", "📈 Analysis & Testing", "🚨 Advanced Alerts"]
         )
 
         st.markdown("---")
@@ -951,6 +1211,10 @@ def main():
 
         # Test panel
         show_test_panel()
+
+    elif page == "🚨 Advanced Alerts":
+        # Advanced Alerts page
+        show_advanced_alerts_page()
 
 
 if __name__ == '__main__':
