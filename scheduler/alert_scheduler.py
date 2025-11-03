@@ -8,7 +8,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 from alerts.alert_engine import AlertEngine
-from notifications import send_alerts
+from alerts.advanced_alert_engine import get_advanced_engine
+from notifications import send_alerts, send_message
 from config import settings
 from utils.logger import logger
 from utils.market_hours import should_check_now, get_market_status
@@ -21,15 +22,16 @@ class AlertScheduler:
         """Initialize scheduler"""
         self.scheduler = BackgroundScheduler()
         self.alert_engine = AlertEngine()
+        self.advanced_engine = get_advanced_engine()  # New advanced engine with custom rules
         self.is_running = False
         self.last_check = None
         self.check_count = 0
 
     def check_and_alert(self):
-        """Main job: Check markets and send alerts"""
+        """Main job: Check markets and send alerts (Event-Driven - Every 30 min)"""
         try:
             logger.info("="*60)
-            logger.info("SCHEDULED ALERT CHECK")
+            logger.info("SCHEDULED ALERT CHECK (EVENT-DRIVEN)")
             logger.info("="*60)
 
             # Check if we should run now
@@ -41,31 +43,55 @@ class AlertScheduler:
             status = get_market_status()
             logger.info(f"Market Status: Trading={status['is_trading_day']}, Hours={status['is_market_hours']}")
 
-            # Check for alerts
-            logger.info("Checking markets for alerts...")
-            alerts = self.alert_engine.check_markets()
-
             self.last_check = datetime.now()
             self.check_count += 1
 
-            if not alerts:
-                logger.info("No alerts generated")
-                return
+            # FIRST: Check custom alert rules (advanced engine)
+            logger.info("Evaluating custom alert rules...")
+            custom_alerts = self.advanced_engine.evaluate_all_rules()
 
-            logger.info(f"Found {len(alerts)} alerts!")
+            if custom_alerts:
+                logger.info(f"Found {len(custom_alerts)} custom rule alerts!")
 
-            # Log alert details
-            for alert in alerts:
-                logger.info(f"  - {alert.symbol}: {alert.alert_type.value} ({alert.alert_level.value})")
+                # Send each custom alert
+                for alert_data in custom_alerts:
+                    logger.info(f"  - {alert_data['symbol']}: {alert_data['rule_type']}")
 
-            # Send alerts via WhatsApp
-            logger.info("Sending alerts via WhatsApp...")
-            success = send_alerts(alerts, combine=True)
+                    # Send WhatsApp/Telegram message
+                    message = alert_data['messages']['whatsapp']
+                    success = send_message(message)
 
-            if success:
-                logger.info("✓ Alerts sent successfully!")
+                    if success:
+                        logger.info(f"✓ Sent alert for {alert_data['symbol']}")
+                    else:
+                        logger.error(f"✗ Failed to send alert for {alert_data['symbol']}")
+
+            # SECOND: Check standard alerts (original engine for backwards compatibility)
+            logger.info("Checking standard market alerts...")
+            standard_alerts = self.alert_engine.check_markets()
+
+            if standard_alerts:
+                logger.info(f"Found {len(standard_alerts)} standard alerts!")
+
+                # Log alert details
+                for alert in standard_alerts:
+                    logger.info(f"  - {alert.symbol}: {alert.alert_type.value} ({alert.alert_level.value})")
+
+                # Send alerts via WhatsApp
+                logger.info("Sending standard alerts...")
+                success = send_alerts(standard_alerts, combine=True)
+
+                if success:
+                    logger.info("✓ Standard alerts sent successfully!")
+                else:
+                    logger.error("✗ Failed to send standard alerts")
+
+            # Summary
+            total_alerts = len(custom_alerts) + len(standard_alerts)
+            if total_alerts == 0:
+                logger.info("No alerts triggered this check")
             else:
-                logger.error("✗ Failed to send alerts")
+                logger.info(f"Total alerts processed: {total_alerts} ({len(custom_alerts)} custom + {len(standard_alerts)} standard)")
 
         except Exception as e:
             logger.error(f"Error in scheduled check: {e}", exc_info=True)
@@ -107,7 +133,6 @@ class AlertScheduler:
                 return
 
             # Send via WhatsApp
-            from notifications import send_message
             success = send_message(news)
 
             if success:
@@ -117,6 +142,30 @@ class AlertScheduler:
 
         except Exception as e:
             logger.error(f"Error sending news: {e}", exc_info=True)
+
+    def send_hourly_summary(self):
+        """Send hourly watchlist summary (Time-Based Alert)"""
+        try:
+            logger.info("Generating hourly watchlist summary...")
+
+            # Get hourly summary from advanced engine
+            summary_data = self.advanced_engine.generate_hourly_summary()
+
+            if not summary_data:
+                logger.warning("No summary data available")
+                return
+
+            # Send via WhatsApp/Telegram
+            message = summary_data['messages']['whatsapp']
+            success = send_message(message)
+
+            if success:
+                logger.info("✓ Hourly summary sent!")
+            else:
+                logger.error("✗ Failed to send hourly summary")
+
+        except Exception as e:
+            logger.error(f"Error sending hourly summary: {e}", exc_info=True)
 
     def start(self):
         """Start the scheduler"""
@@ -177,6 +226,25 @@ class AlertScheduler:
             replace_existing=True
         )
         logger.info("✓ Added morning news digest (8:00 AM ET)")
+
+        # Add hourly summaries during market hours (10 AM, 11 AM, 1 PM, 2 PM, 3 PM ET)
+        hourly_times = [
+            (10, 0, 'hourly_10am', '10:00 AM'),
+            (11, 0, 'hourly_11am', '11:00 AM'),
+            (13, 0, 'hourly_1pm', '1:00 PM'),
+            (14, 0, 'hourly_2pm', '2:00 PM'),
+            (15, 0, 'hourly_3pm', '3:00 PM'),
+        ]
+
+        for hour, minute, job_id, time_str in hourly_times:
+            self.scheduler.add_job(
+                self.send_hourly_summary,
+                trigger=CronTrigger(hour=hour, minute=minute, timezone='US/Eastern'),
+                id=job_id,
+                name=f'Hourly Summary ({time_str} ET)',
+                replace_existing=True
+            )
+            logger.info(f"✓ Added hourly summary ({time_str} ET)")
 
         # Start scheduler
         self.scheduler.start()

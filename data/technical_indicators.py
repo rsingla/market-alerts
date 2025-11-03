@@ -367,6 +367,7 @@ class TechnicalIndicators:
 def get_technical_analysis(symbol: str, period: str = '3mo') -> Dict:
     """
     Get complete technical analysis for a symbol with caching
+    Uses Alpaca data as primary source with yfinance fallback
 
     Args:
         symbol: Stock symbol
@@ -383,15 +384,29 @@ def get_technical_analysis(symbol: str, period: str = '3mo') -> Dict:
         return cached_analysis
 
     try:
-        import yfinance as yf
+        # Use get_historical_data which supports Alpaca > yfinance fallback
+        from data.market_data import get_historical_data
 
-        logger.info(f"Calculating technical indicators for {symbol} ({period}) from API...")
-        # Fetch historical data
-        ticker = yf.Ticker(symbol)
-        df = ticker.history(period=period)
+        logger.info(f"Calculating technical indicators for {symbol} ({period})...")
+
+        # Fetch historical data (will use Alpaca if configured)
+        hist_data = get_historical_data(symbol, period=period)
+
+        if not hist_data:
+            logger.warning(f"No data available for {symbol}")
+            return {}
+
+        # Convert to DataFrame
+        df = pd.DataFrame({
+            'Open': hist_data['open'],
+            'High': hist_data['high'],
+            'Low': hist_data['low'],
+            'Close': hist_data['close'],
+            'Volume': hist_data['volume']
+        }, index=hist_data['dates'])
 
         if df.empty:
-            logger.warning(f"No data available for {symbol}")
+            logger.warning(f"Empty dataframe for {symbol}")
             return {}
 
         # Calculate all indicators
@@ -409,7 +424,7 @@ def get_technical_analysis(symbol: str, period: str = '3mo') -> Dict:
         return analysis
 
     except Exception as e:
-        logger.error(f"Error fetching technical analysis for {symbol}: {e}")
+        logger.error(f"Error fetching technical analysis for {symbol}: {e}", exc_info=True)
         return {}
 
 

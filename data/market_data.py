@@ -164,6 +164,95 @@ def _get_alpaca_quote(symbol: str) -> Optional[StockQuote]:
         return None
 
 
+def _get_alpaca_historical(symbol: str, period: str = "1mo") -> Optional[dict]:
+    """
+    Fetch historical data using Alpaca Markets (FREE unlimited data)
+
+    Args:
+        symbol: Stock ticker symbol
+        period: Time period (1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max)
+
+    Returns:
+        Dictionary with OHLCV data or None
+    """
+    try:
+        from alpaca.data.historical import StockHistoricalDataClient
+        from alpaca.data.requests import StockBarsRequest
+        from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+        import pandas as pd
+
+        # Initialize Alpaca client
+        client = StockHistoricalDataClient(
+            api_key=settings.ALPACA_API_KEY,
+            secret_key=settings.ALPACA_SECRET_KEY
+        )
+
+        # Map period string to days and timeframe
+        period_map = {
+            '1d': (1, TimeFrame(1, TimeFrameUnit.Hour)),
+            '5d': (5, TimeFrame(1, TimeFrameUnit.Hour)),
+            '1mo': (30, TimeFrame(1, TimeFrameUnit.Day)),
+            '3mo': (90, TimeFrame(1, TimeFrameUnit.Day)),
+            '6mo': (180, TimeFrame(1, TimeFrameUnit.Day)),
+            '1y': (365, TimeFrame(1, TimeFrameUnit.Day)),
+            '2y': (730, TimeFrame(1, TimeFrameUnit.Day)),
+            '5y': (1825, TimeFrame(1, TimeFrameUnit.Day)),
+            '10y': (3650, TimeFrame(1, TimeFrameUnit.Day)),
+            'ytd': ((datetime.now() - datetime(datetime.now().year, 1, 1)).days, TimeFrame(1, TimeFrameUnit.Day)),
+            'max': (3650, TimeFrame(1, TimeFrameUnit.Day))  # Default to 10 years for max
+        }
+
+        days, timeframe = period_map.get(period, (30, TimeFrame(1, TimeFrameUnit.Day)))
+
+        # Calculate date range
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days)
+
+        # Create request
+        request = StockBarsRequest(
+            symbol_or_symbols=symbol,
+            timeframe=timeframe,
+            start=start_date,
+            end=end_date
+        )
+
+        # Fetch data
+        bars = client.get_stock_bars(request)
+
+        if not bars or symbol not in bars.df.index.get_level_values('symbol').unique():
+            logger.warning(f"No Alpaca historical data for {symbol}")
+            return None
+
+        # Convert to DataFrame
+        df = bars.df
+
+        # If multi-index, select the ticker
+        if isinstance(df.index, pd.MultiIndex):
+            df = df.xs(symbol, level='symbol')
+
+        # Check if we have data
+        if df.empty:
+            logger.warning(f"Empty Alpaca historical data for {symbol}")
+            return None
+
+        # Convert to expected format
+        data = {
+            'dates': df.index.tolist(),
+            'open': df['open'].tolist(),
+            'high': df['high'].tolist(),
+            'low': df['low'].tolist(),
+            'close': df['close'].tolist(),
+            'volume': df['volume'].tolist()
+        }
+
+        logger.debug(f"Fetched {len(data['dates'])} bars for {symbol} from Alpaca")
+        return data
+
+    except Exception as e:
+        logger.error(f"Alpaca historical error for {symbol}: {e}")
+        return None
+
+
 def _get_yfinance_quote(symbol: str) -> Optional[StockQuote]:
     """Fetch quote using yfinance"""
     try:
@@ -305,6 +394,7 @@ def get_market_summary(symbols: Optional[List[str]] = None) -> Dict[str, StockQu
 def get_historical_data(symbol: str, period: str = "1mo") -> Optional[dict]:
     """
     Get historical price data with intelligent caching
+    Priority: Alpaca > yfinance
 
     Args:
         symbol: Stock ticker symbol
@@ -321,32 +411,45 @@ def get_historical_data(symbol: str, period: str = "1mo") -> Optional[dict]:
         return cached_data
 
     try:
-        if not settings.USE_YFINANCE:
-            logger.warning("Historical data only available with yfinance")
+        # First, try Alpaca if configured (FREE unlimited data)
+        if hasattr(settings, 'ALPACA_API_KEY') and settings.ALPACA_API_KEY and settings.ALPACA_API_KEY != 'your_alpaca_api_key':
+            logger.debug(f"Trying Alpaca for {symbol} historical data ({period})...")
+            data = _get_alpaca_historical(symbol, period)
+            if data:
+                logger.debug(f"✓ Alpaca success for {symbol} historical data")
+                # Cache the data
+                cache.set('historical', symbol, data, period=period)
+                return data
+            else:
+                logger.info(f"Alpaca historical failed for {symbol}, trying fallback...")
+
+        # Fallback to yfinance if enabled
+        if settings.USE_YFINANCE:
+            logger.info(f"Fetching historical data for {symbol} ({period}) from yfinance...")
+            ticker = yf.Ticker(symbol)
+            hist = ticker.history(period=period)
+
+            if hist.empty:
+                logger.warning(f"No historical data for {symbol}")
+                return None
+
+            data = {
+                'dates': hist.index.tolist(),
+                'open': hist['Open'].tolist(),
+                'high': hist['High'].tolist(),
+                'low': hist['Low'].tolist(),
+                'close': hist['Close'].tolist(),
+                'volume': hist['Volume'].tolist()
+            }
+
+            # Cache the data
+            cache.set('historical', symbol, data, period=period)
+            logger.debug(f"Cached historical data for {symbol} ({period})")
+
+            return data
+        else:
+            logger.warning("No historical data source available")
             return None
-
-        logger.info(f"Fetching historical data for {symbol} ({period}) from API...")
-        ticker = yf.Ticker(symbol)
-        hist = ticker.history(period=period)
-
-        if hist.empty:
-            logger.warning(f"No historical data for {symbol}")
-            return None
-
-        data = {
-            'dates': hist.index.tolist(),
-            'open': hist['Open'].tolist(),
-            'high': hist['High'].tolist(),
-            'low': hist['Low'].tolist(),
-            'close': hist['Close'].tolist(),
-            'volume': hist['Volume'].tolist()
-        }
-
-        # Cache the data
-        cache.set('historical', symbol, data, period=period)
-        logger.debug(f"Cached historical data for {symbol} ({period})")
-
-        return data
 
     except Exception as e:
         logger.error(f"Error fetching historical data for {symbol}: {e}")
