@@ -10,6 +10,9 @@ from datetime import datetime, timedelta
 from utils.market_hours import get_market_status
 from data.market_data import get_market_summary
 from data.news_fetcher import get_market_news
+from data.technical_indicators import get_technical_analysis
+from ai import get_analyzer
+from ai.alpaca_trading_integration import get_alpaca_integration
 from alerts.alert_engine import AlertEngine
 from notifications import WhatsAppSender
 from config import settings
@@ -40,6 +43,106 @@ st.markdown("""
         padding: 1rem;
         margin: 0.5rem 0;
     }
+    .indicator-box {
+        padding: 1rem;
+        border-radius: 0.5rem;
+        border: 1px solid #e0e0e0;
+        margin: 0.5rem 0;
+    }
+
+    /* AI Evaluation Styles */
+    .sentiment-strong-bullish {
+        background: linear-gradient(135deg, #00c853 0%, #64dd17 100%);
+        padding: 15px 20px;
+        border-radius: 10px;
+        text-align: center;
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: white;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        margin: 10px 0;
+    }
+    .sentiment-bullish {
+        background: linear-gradient(135deg, #4caf50 0%, #8bc34a 100%);
+        padding: 15px 20px;
+        border-radius: 10px;
+        text-align: center;
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: white;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        margin: 10px 0;
+    }
+    .sentiment-neutral {
+        background: linear-gradient(135deg, #ff9800 0%, #ffc107 100%);
+        padding: 15px 20px;
+        border-radius: 10px;
+        text-align: center;
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: white;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        margin: 10px 0;
+    }
+    .sentiment-bearish {
+        background: linear-gradient(135deg, #f44336 0%, #e57373 100%);
+        padding: 15px 20px;
+        border-radius: 10px;
+        text-align: center;
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: white;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        margin: 10px 0;
+    }
+    .sentiment-strong-bearish {
+        background: linear-gradient(135deg, #c62828 0%, #d32f2f 100%);
+        padding: 15px 20px;
+        border-radius: 10px;
+        text-align: center;
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: white;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        margin: 10px 0;
+    }
+    .indicator-card {
+        padding: 12px;
+        border-radius: 8px;
+        border: 2px solid #e0e0e0;
+        margin: 8px 0;
+        background: white;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    .indicator-signal-bullish {
+        background: #e8f5e9;
+        border-left: 4px solid #4caf50;
+    }
+    .indicator-signal-bearish {
+        background: #ffebee;
+        border-left: 4px solid #f44336;
+    }
+    .indicator-signal-neutral {
+        background: #fff3e0;
+        border-left: 4px solid #ff9800;
+    }
+    .level-box {
+        padding: 8px 12px;
+        border-radius: 5px;
+        margin: 5px 0;
+        font-weight: bold;
+        font-size: 0.9rem;
+    }
+    .support-level {
+        background: #e8f5e9;
+        color: #2e7d32;
+        border-left: 3px solid #2e7d32;
+    }
+    .resistance-level {
+        background: #ffebee;
+        color: #c62828;
+        border-left: 3px solid #c62828;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -53,6 +156,37 @@ if 'whatsapp_sender' not in st.session_state:
 
 if 'last_refresh' not in st.session_state:
     st.session_state.last_refresh = None
+
+if 'ai_analyzer' not in st.session_state:
+    st.session_state.ai_analyzer = get_analyzer()
+
+if 'alpaca_integration' not in st.session_state:
+    st.session_state.alpaca_integration = get_alpaca_integration()
+
+if 'ai_evaluation_analysis' not in st.session_state:
+    st.session_state.ai_evaluation_analysis = None
+
+# Initialize other notification senders for testing
+if 'telegram_sender' not in st.session_state:
+    try:
+        from notifications.telegram_sender import TelegramSender
+        st.session_state.telegram_sender = TelegramSender()
+    except:
+        st.session_state.telegram_sender = None
+
+if 'email_sender' not in st.session_state:
+    try:
+        from notifications.email_sender import EmailSender
+        st.session_state.email_sender = EmailSender()
+    except:
+        st.session_state.email_sender = None
+
+if 'signal_sender' not in st.session_state:
+    try:
+        from notifications.signal_sender import SignalSender
+        st.session_state.signal_sender = SignalSender()
+    except:
+        st.session_state.signal_sender = None
 
 
 def show_market_status():
@@ -87,24 +221,29 @@ def show_watchlist_summary():
         quotes = get_market_summary()
 
     if not quotes:
-        st.warning("No market data available")
+        st.warning("No market data available. Check your API configuration.")
+        st.info("💡 **Tip:** Make sure your Polygon.io API key is configured in .env")
         return
 
     # Create DataFrame
     data = []
     for symbol, quote in quotes.items():
+        # Color coding for changes
+        change_color = "🟢" if quote.change >= 0 else "🔴"
+
         data.append({
             'Symbol': symbol,
             'Price': f"${quote.price:.2f}",
-            'Change': f"{quote.change_percent:+.2f}%",
+            '': change_color,
+            'Change %': f"{quote.change_percent:+.2f}%",
             'Change $': f"${quote.change:+.2f}",
             'Volume': f"{quote.volume:,}",
-            'Volume Ratio': f"{quote.volume_ratio:.2f}x"
+            'Vol Ratio': f"{quote.volume_ratio:.2f}x"
         })
 
     df = pd.DataFrame(data)
 
-    # Style the dataframe
+    # Display the dataframe
     st.dataframe(
         df,
         use_container_width=True,
@@ -112,14 +251,133 @@ def show_watchlist_summary():
     )
 
     st.session_state.last_refresh = datetime.now()
-    st.caption(f"Last updated: {st.session_state.last_refresh.strftime('%I:%M:%S %p')}")
+    st.caption(f"Last updated: {st.session_state.last_refresh.strftime('%I:%M:%S %p')} | Data from: Alpaca (primary) → Polygon.io → Yahoo Finance → Alpha Vantage")
+
+
+def show_alerts():
+    """Display current alerts"""
+    st.subheader("🔔 Active Alerts")
+
+    with st.spinner("Checking for alerts..."):
+        alerts = st.session_state.alert_engine.check_markets()
+
+    if not alerts:
+        st.info("✓ No alerts at this time - all stocks within normal ranges")
+        return
+
+    # Display alerts by priority
+    critical = [a for a in alerts if a.alert_level.value == 'critical']
+    warning = [a for a in alerts if a.alert_level.value == 'warning']
+    info = [a for a in alerts if a.alert_level.value == 'info']
+
+    if critical:
+        st.error(f"🚨 {len(critical)} Critical Alert{'s' if len(critical) > 1 else ''}")
+        for alert in critical:
+            with st.expander(f"{alert.symbol} - {alert.alert_type.value}", expanded=True):
+                st.markdown(alert.message)
+
+    if warning:
+        st.warning(f"⚠️  {len(warning)} Warning Alert{'s' if len(warning) > 1 else ''}")
+        for alert in warning:
+            with st.expander(f"{alert.symbol} - {alert.alert_type.value}"):
+                st.markdown(alert.message)
+
+    if info:
+        st.info(f"ℹ️ {len(info)} Info Alert{'s' if len(info) > 1 else ''}")
+        for alert in info:
+            with st.expander(f"{alert.symbol} - {alert.alert_type.value}"):
+                st.markdown(alert.message)
+
+
+def show_news():
+    """Display market news"""
+    st.subheader("📰 Market News")
+
+    with st.spinner("Fetching latest news..."):
+        articles = get_market_news(max_items=15)
+
+    if not articles:
+        st.info("No news available at this time")
+        return
+
+    for i, article in enumerate(articles, 1):
+        with st.expander(f"{i}. {article.title}"):
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.markdown(f"**Source:** {article.source}")
+            with col2:
+                st.markdown(f"**Published:** {article.published.strftime('%b %d, %I:%M %p')}")
+
+            if article.summary:
+                st.markdown(article.summary)
+            st.markdown(f"[Read full article →]({article.url})")
+
+
+def show_ai_analysis(symbol: str, quotes: dict):
+    """Display AI-powered analysis for a stock"""
+    st.subheader(f"🤖 AI Analysis for {symbol}")
+
+    if symbol not in quotes:
+        st.warning(f"No market data available for {symbol}")
+        return
+
+    quote = quotes[symbol]
+
+    # Get technical indicators
+    with st.spinner(f"Analyzing {symbol} with AI..."):
+        try:
+            # Fetch technical indicators
+            technical_data = get_technical_analysis(symbol, period='3mo')
+
+            if not technical_data or not technical_data.get('latest'):
+                st.warning("Insufficient data for technical analysis")
+                technical_data = {'latest': {}, 'signals': {}}
+
+            # Prepare current data
+            current_data = {
+                'symbol': symbol,
+                'price': quote.price,
+                'change_percent': quote.change_percent,
+                'volume': quote.volume,
+                'day_high': quote.day_high,
+                'day_low': quote.day_low,
+            }
+
+            # Get AI analysis
+            analysis = st.session_state.ai_analyzer.analyze_stock(
+                symbol=symbol,
+                current_data=current_data,
+                technical_indicators=technical_data,
+                news=None  # Could add news context here
+            )
+
+            # Display AI summary
+            st.info(f"**AI Summary:** {analysis['summary']}")
+
+            # Full analysis in expander
+            with st.expander("📊 Detailed Technical Analysis"):
+                st.markdown(analysis['analysis'])
+
+            # Recommendation
+            rec = analysis['recommendation'].lower()
+            if 'bullish' in rec:
+                st.success(f"**💡 AI Recommendation:** {analysis['recommendation']}")
+            elif 'bearish' in rec:
+                st.error(f"**💡 AI Recommendation:** {analysis['recommendation']}")
+            else:
+                st.warning(f"**💡 AI Recommendation:** {analysis['recommendation']}")
+
+        except Exception as e:
+            st.error(f"AI Analysis Error: {str(e)}")
+            st.info("💡 **Tip:** Make sure DEEPSEEK_API_KEY is configured in .env and has credits")
 
 
 def show_price_chart(symbol: str):
     """Display price chart for a symbol"""
     from data.market_data import get_historical_data
 
-    hist = get_historical_data(symbol, period="1mo")
+    with st.spinner(f"Loading chart for {symbol}..."):
+        hist = get_historical_data(symbol, period="1mo")
 
     if not hist:
         st.warning(f"No historical data available for {symbol}")
@@ -142,128 +400,450 @@ def show_price_chart(symbol: str):
         yaxis_title="Price ($)",
         xaxis_title="Date",
         height=400,
-        template="plotly_white"
+        template="plotly_white",
+        xaxis_rangeslider_visible=False
     )
 
     st.plotly_chart(fig, use_container_width=True)
 
 
-def show_alerts():
-    """Display current alerts"""
-    st.subheader("🔔 Active Alerts")
+def show_technical_indicators(symbol: str):
+    """Display technical indicators for a stock"""
+    st.subheader(f"📊 Technical Indicators - {symbol}")
 
-    with st.spinner("Checking for alerts..."):
-        alerts = st.session_state.alert_engine.check_markets()
+    with st.spinner(f"Calculating indicators for {symbol}..."):
+        indicators = get_technical_analysis(symbol, period='3mo')
 
-    if not alerts:
-        st.info("No alerts at this time")
+    if not indicators or not indicators.get('latest'):
+        st.warning(f"Insufficient data for technical analysis of {symbol}")
         return
 
-    # Display alerts by priority
-    critical = [a for a in alerts if a.alert_level.value == 'critical']
-    warning = [a for a in alerts if a.alert_level.value == 'warning']
-    info = [a for a in alerts if a.alert_level.value == 'info']
+    latest = indicators['latest']
+    signals = indicators.get('signals', {})
 
-    if critical:
-        st.error(f"🚨 {len(critical)} Critical Alert{'s' if len(critical) > 1 else ''}")
-        for alert in critical:
-            with st.expander(f"{alert.symbol} - {alert.alert_type.value}"):
-                st.markdown(alert.message)
+    # Display key indicators in columns
+    st.markdown("#### Key Indicators")
+    col1, col2, col3, col4 = st.columns(4)
 
-    if warning:
-        st.warning(f"⚠️ {len(warning)} Warning Alert{'s' if len(warning) > 1 else ''}")
-        for alert in warning:
-            with st.expander(f"{alert.symbol} - {alert.alert_type.value}"):
-                st.markdown(alert.message)
+    with col1:
+        rsi = latest.get('rsi')
+        if rsi:
+            rsi_signal = signals.get('rsi', 'neutral')
+            rsi_color = "🟢" if rsi_signal == 'oversold' else "🔴" if rsi_signal == 'overbought' else "🟡"
+            st.metric("RSI (14)", f"{rsi:.2f} {rsi_color}", f"{rsi_signal.title()}")
 
-    if info:
-        st.info(f"ℹ️ {len(info)} Info Alert{'s' if len(info) > 1 else ''}")
-        for alert in info:
-            with st.expander(f"{alert.symbol} - {alert.alert_type.value}"):
-                st.markdown(alert.message)
+    with col2:
+        macd = latest.get('macd')
+        if macd:
+            macd_signal = signals.get('macd', 'neutral')
+            macd_color = "🟢" if macd_signal == 'bullish' else "🔴"
+            st.metric("MACD", f"{macd:.2f} {macd_color}", f"{macd_signal.title()}")
+
+    with col3:
+        sma_20 = latest.get('sma_20')
+        if sma_20:
+            st.metric("SMA 20", f"${sma_20:.2f}")
+
+    with col4:
+        bb_upper = latest.get('bb_upper')
+        if bb_upper:
+            st.metric("BB Upper", f"${bb_upper:.2f}")
+
+    # Display all signals
+    st.markdown("#### Trading Signals")
+    signal_cols = st.columns(len(signals))
+
+    for i, (key, value) in enumerate(signals.items()):
+        with signal_cols[i]:
+            if value == 'bullish' or value == 'oversold':
+                st.success(f"**{key.replace('_', ' ').title()}**\n{value.title()}")
+            elif value == 'bearish' or value == 'overbought':
+                st.error(f"**{key.replace('_', ' ').title()}**\n{value.title()}")
+            else:
+                st.info(f"**{key.replace('_', ' ').title()}**\n{value.title()}")
+
+    # Detailed indicators in expander
+    with st.expander("📈 All Indicator Values"):
+        ind_data = []
+        for key, value in latest.items():
+            if value is not None:
+                ind_data.append({
+                    'Indicator': key.replace('_', ' ').title(),
+                    'Value': f"{value:.2f}"
+                })
+        if ind_data:
+            st.dataframe(pd.DataFrame(ind_data), use_container_width=True, hide_index=True)
 
 
-def show_news():
-    """Display market news"""
-    st.subheader("📰 Market News")
+def get_sentiment_class(sentiment: str) -> str:
+    """Get CSS class for sentiment"""
+    sentiment_map = {
+        "Strong Bullish": "sentiment-strong-bullish",
+        "Bullish": "sentiment-bullish",
+        "Neutral": "sentiment-neutral",
+        "Bearish": "sentiment-bearish",
+        "Strong Bearish": "sentiment-strong-bearish"
+    }
+    return sentiment_map.get(sentiment, "sentiment-neutral")
 
-    with st.spinner("Fetching news..."):
-        articles = get_market_news(max_items=10)
 
-    if not articles:
-        st.info("No news available")
+def get_signal_class(signal: str) -> str:
+    """Get CSS class for indicator signal"""
+    signal_lower = signal.lower()
+    if any(word in signal_lower for word in ["bullish", "oversold", "rising", "golden"]):
+        return "indicator-signal-bullish"
+    elif any(word in signal_lower for word in ["bearish", "overbought", "falling", "death"]):
+        return "indicator-signal-bearish"
+    else:
+        return "indicator-signal-neutral"
+
+
+def display_compact_indicator(title: str, data: dict, col):
+    """Display a compact indicator card in a column"""
+    signal = data.get('signal', 'N/A')
+    signal_class = get_signal_class(signal)
+
+    with col:
+        st.markdown(f"""
+            <div class="indicator-card {signal_class}">
+                <div style="font-weight: bold; margin-bottom: 8px;">{title}</div>
+            </div>
+        """, unsafe_allow_html=True)
+
+        # Show key values (limit to 2-3 most important)
+        values_shown = 0
+        for key, value in data.items():
+            if key != 'signal' and not isinstance(value, dict) and values_shown < 3:
+                st.caption(f"{key.replace('_', ' ').title()}: {value}")
+                values_shown += 1
+
+        # Show signal
+        if signal != 'N/A':
+            if "bullish" in signal.lower() or "oversold" in signal.lower():
+                st.success(f"**{signal}**", icon="📈")
+            elif "bearish" in signal.lower() or "overbought" in signal.lower():
+                st.error(f"**{signal}**", icon="📉")
+            else:
+                st.warning(f"**{signal}**", icon="➡️")
+
+
+def show_ai_evaluation_page():
+    """Display AI Evaluation page with 11 indicators"""
+    st.subheader("🤖 AI Trading Analysis Engine")
+    st.caption("Advanced technical analysis with 11 key indicators powered by Alpaca data")
+
+    # Controls in columns
+    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+
+    with col1:
+        ticker = st.text_input(
+            "Stock Ticker",
+            value="AAPL",
+            help="Enter stock ticker symbol"
+        ).upper()
+
+    with col2:
+        timeframe = st.selectbox(
+            "Timeframe",
+            options=["1D", "30D", "200D", "365D", "1H", "15m", "5m", "1m"],
+            index=0,
+            help="Select data timeframe"
+        )
+
+    with col3:
+        force_refresh = st.checkbox(
+            "Force Refresh",
+            value=False,
+            help="Bypass 12hr cache"
+        )
+
+    with col4:
+        if st.button("🚀 Analyze", type="primary", use_container_width=True):
+            with st.spinner(f"Analyzing {ticker} ({timeframe})..."):
+                analysis = st.session_state.alpaca_integration.get_ai_evaluation(
+                    ticker,
+                    timeframe,
+                    force_refresh=force_refresh
+                )
+                st.session_state.ai_evaluation_analysis = analysis
+                st.success("Analysis complete!")
+                st.rerun()
+
+    st.markdown("---")
+
+    # Display analysis if available
+    if st.session_state.ai_evaluation_analysis is None:
+        # Welcome message
+        st.info("""
+        **Welcome to the AI Trading Analysis Engine!**
+
+        This powerful tool analyzes stocks using 11 comprehensive technical indicators:
+        - **Trend**: SMA, EMA
+        - **Momentum**: MACD, RSI, Stochastic
+        - **Volatility & Volume**: Bollinger Bands, OBV, VWAP
+        - **Advanced**: ADX, Ichimoku Cloud, Fibonacci
+
+        **Features:**
+        - Real-time data from Alpaca Markets
+        - Multiple timeframes: 1 day to 1 year (1D, 30D, 200D, 365D) + intraday (1H, 15m, 5m, 1m)
+        - 12-hour intelligent caching
+        - Automatic sentiment calculation
+        - Support/resistance level identification
+
+        👆 Enter a ticker symbol, select timeframe, and click "Analyze" to get started!
+        """)
         return
 
-    for i, article in enumerate(articles, 1):
-        with st.expander(f"{i}. {article.title}"):
-            st.markdown(f"**Source:** {article.source}")
-            st.markdown(f"**Published:** {article.published.strftime('%B %d, %Y at %I:%M %p')}")
-            if article.summary:
-                st.markdown(article.summary)
-            st.markdown(f"[Read more]({article.url})")
+    analysis = st.session_state.ai_evaluation_analysis
 
+    # Check for errors
+    if 'error' in analysis:
+        st.error(f"Analysis Error: {analysis['error']}")
+        st.info("💡 Try selecting a different ticker or timeframe")
+        return
 
-def show_settings():
-    """Display and edit settings"""
-    st.subheader("⚙️ Settings")
+    # Header with sentiment
+    ticker = analysis['asset_analyzed']
+    sentiment = analysis['overall_sentiment']
 
-    st.markdown("### Alert Thresholds")
+    st.markdown(f"### 📊 Analysis: {ticker}")
 
+    # Sentiment display
+    sentiment_class = get_sentiment_class(sentiment)
+    st.markdown(f"""
+        <div class="{sentiment_class}">
+            {sentiment}
+        </div>
+    """, unsafe_allow_html=True)
+
+    # Metadata row
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Data Source", "Alpaca")
+    with col2:
+        st.metric("Timeframe", analysis['data_timeframe'])
+    with col3:
+        st.metric("Data Points", analysis.get('data_points_analyzed', 0))
+    with col4:
+        timestamp = datetime.fromisoformat(analysis['analysis_timestamp_utc'].rstrip('Z'))
+        st.metric("Analysis Time", timestamp.strftime('%H:%M UTC'))
+
+    st.markdown("---")
+
+    # Summary
+    with st.expander("📝 Analysis Summary", expanded=True):
+        st.info(analysis['analysis_summary'])
+
+    # Key Levels
+    st.markdown("### 🎯 Key Price Levels")
     col1, col2 = st.columns(2)
 
     with col1:
-        st.number_input("Small Move (%)", value=float(settings.SMALL_MOVE_THRESHOLD), step=0.1, key="small_threshold")
-        st.number_input("Medium Move (%)", value=float(settings.MEDIUM_MOVE_THRESHOLD), step=0.1, key="medium_threshold")
-        st.number_input("Large Move (%)", value=float(settings.LARGE_MOVE_THRESHOLD), step=0.1, key="large_threshold")
+        st.markdown("**🟢 Support Levels**")
+        for i, level in enumerate(analysis['key_levels']['support'][:3], 1):
+            st.markdown(f"""
+                <div class="level-box support-level">
+                    Support {i}: ${level:.2f}
+                </div>
+            """, unsafe_allow_html=True)
 
     with col2:
-        st.number_input("Volume Spike (x)", value=float(settings.VOLUME_SPIKE_THRESHOLD), step=0.1, key="volume_threshold")
-        st.number_input("Check Interval (min)", value=int(settings.CHECK_INTERVAL_MINUTES), step=1, key="check_interval")
+        st.markdown("**🔴 Resistance Levels**")
+        for i, level in enumerate(analysis['key_levels']['resistance'][:3], 1):
+            st.markdown(f"""
+                <div class="level-box resistance-level">
+                    Resistance {i}: ${level:.2f}
+                </div>
+            """, unsafe_allow_html=True)
 
-    st.markdown("### Watchlist")
-    watchlist_text = st.text_area("Stock Symbols (comma-separated)", value=",".join(settings.WATCHLIST), height=100)
+    st.markdown("---")
 
-    st.markdown("### WhatsApp Notifications")
-    col1, col2 = st.columns(2)
+    # Signals Summary
+    st.markdown("### 🎯 Signals Summary")
+    indicators = analysis['indicator_details']
+
+    bullish = []
+    bearish = []
+    neutral = []
+
+    for name, data in indicators.items():
+        signal = data.get('signal', '')
+        signal_lower = signal.lower()
+
+        if any(word in signal_lower for word in ["bullish", "oversold", "rising", "golden"]):
+            bullish.append(f"{name.upper()}: {signal}")
+        elif any(word in signal_lower for word in ["bearish", "overbought", "falling", "death"]):
+            bearish.append(f"{name.upper()}: {signal}")
+        else:
+            neutral.append(f"{name.upper()}: {signal}")
+
+    col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.text_input("Twilio Account SID", value=settings.TWILIO_ACCOUNT_SID or "", type="password", disabled=True)
-        st.text_input("WhatsApp From", value=settings.TWILIO_WHATSAPP_FROM or "", disabled=True)
+        st.success(f"**🟢 Bullish ({len(bullish)})**")
+        for signal in bullish:
+            st.caption(f"• {signal}")
 
     with col2:
-        st.text_input("Twilio Auth Token", value="*" * 20 if settings.TWILIO_AUTH_TOKEN else "", type="password", disabled=True)
-        st.text_input("WhatsApp To", value=settings.TWILIO_WHATSAPP_TO or "", disabled=True)
+        st.error(f"**🔴 Bearish ({len(bearish)})**")
+        for signal in bearish:
+            st.caption(f"• {signal}")
 
-    st.info("To change these settings, edit the `.env` file and restart the application")
+    with col3:
+        st.warning(f"**🟡 Neutral ({len(neutral)})**")
+        for signal in neutral:
+            st.caption(f"• {signal}")
+
+    st.markdown("---")
+
+    # All Indicators in compact grid
+    st.markdown("### 📊 Technical Indicators (11)")
+
+    # Row 1: Trend (2 columns)
+    st.markdown("**📈 Trend Indicators**")
+    col1, col2 = st.columns(2)
+    if 'sma' in indicators:
+        display_compact_indicator("SMA (Simple Moving Average)", indicators['sma'], col1)
+    if 'ema' in indicators:
+        display_compact_indicator("EMA (Exponential Moving Average)", indicators['ema'], col2)
+
+    st.markdown("---")
+
+    # Row 2: Momentum (3 columns)
+    st.markdown("**⚡ Momentum Indicators**")
+    col1, col2, col3 = st.columns(3)
+    if 'macd' in indicators:
+        display_compact_indicator("MACD", indicators['macd'], col1)
+    if 'rsi' in indicators:
+        display_compact_indicator("RSI", indicators['rsi'], col2)
+    if 'stochastic' in indicators:
+        display_compact_indicator("Stochastic", indicators['stochastic'], col3)
+
+    st.markdown("---")
+
+    # Row 3: Volatility & Volume (3 columns)
+    st.markdown("**💨 Volatility & Volume Indicators**")
+    col1, col2, col3 = st.columns(3)
+    if 'bollinger_bands' in indicators:
+        display_compact_indicator("Bollinger Bands", indicators['bollinger_bands'], col1)
+    if 'obv' in indicators:
+        display_compact_indicator("OBV (On-Balance Volume)", indicators['obv'], col2)
+    if 'vwap' in indicators:
+        display_compact_indicator("VWAP", indicators['vwap'], col3)
+
+    st.markdown("---")
+
+    # Row 4: Advanced (3 columns)
+    st.markdown("**🎯 Advanced Indicators**")
+    col1, col2, col3 = st.columns(3)
+    if 'adx' in indicators:
+        display_compact_indicator("ADX (Trend Strength)", indicators['adx'], col1)
+    if 'ichimoku' in indicators:
+        display_compact_indicator("Ichimoku Cloud", indicators['ichimoku'], col2)
+    if 'fibonacci' in indicators:
+        display_compact_indicator("Fibonacci Retracement", indicators['fibonacci'], col3)
+
+    st.markdown("---")
+
+    # Export option
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.caption(f"🕒 Analysis generated at: {analysis['analysis_timestamp_utc']}")
+        st.caption("💾 Results cached for 12 hours or until end of trading day")
+    with col2:
+        if st.button("💾 Export to JSON", use_container_width=True):
+            filepath = st.session_state.alpaca_integration.export_to_json(analysis)
+            if filepath:
+                st.success(f"Exported to: {filepath}")
 
 
 def show_test_panel():
     """Test panel for sending messages"""
     st.subheader("🧪 Test Panel")
 
-    st.markdown("### Send Test Message")
+    st.markdown("### Send Test Notifications")
+    st.caption("Test each notification channel individually")
 
-    message = st.text_area("Message", value="This is a test message from Market Alerts Dashboard", height=100)
+    message = st.text_area("Test Message", value="✅ Test message from Market Alerts Dashboard", height=100)
 
-    if st.button("Send Test WhatsApp"):
-        with st.spinner("Sending message..."):
-            success = st.session_state.whatsapp_sender.send_message(message)
+    # Create columns for each notification channel
+    col1, col2, col3, col4 = st.columns(4)
 
-        if success:
-            st.success("✓ Test message sent successfully!")
-        else:
-            st.error("✗ Failed to send message. Check logs for details.")
+    with col1:
+        if st.button("📧 Email", use_container_width=True):
+            if not settings.BREVO_API_KEY:
+                st.error("✗ Email not configured")
+            else:
+                with st.spinner("Sending email..."):
+                    try:
+                        from notifications.email_sender import send_message as send_email
+                        success = send_email(
+                            subject="Market Alerts Test",
+                            body=message
+                        )
+                        if success:
+                            st.success("✓ Email sent!")
+                        else:
+                            st.error("✗ Email failed")
+                    except Exception as e:
+                        st.error(f"✗ Error: {e}")
 
+    with col2:
+        if st.button("📱 WhatsApp", use_container_width=True):
+            if not settings.TWILIO_ACCOUNT_SID:
+                st.error("✗ WhatsApp not configured")
+            else:
+                with st.spinner("Sending WhatsApp..."):
+                    success = st.session_state.whatsapp_sender.send_message(message)
+                    if success:
+                        st.success("✓ WhatsApp sent!")
+                    else:
+                        st.error("✗ WhatsApp failed")
+
+    with col3:
+        if st.button("✈️ Telegram", use_container_width=True):
+            if not settings.TELEGRAM_BOT_TOKEN:
+                st.error("✗ Telegram not configured")
+            else:
+                with st.spinner("Sending Telegram..."):
+                    try:
+                        from notifications.telegram_sender import send_message as send_telegram
+                        success = send_telegram(message)
+                        if success:
+                            st.success("✓ Telegram sent!")
+                        else:
+                            st.error("✗ Telegram failed")
+                            st.caption("Check Chat ID configuration")
+                    except Exception as e:
+                        st.error(f"✗ Error: {e}")
+
+    with col4:
+        if st.button("📡 Signal", use_container_width=True):
+            if not settings.SIGNAL_SENDER_NUMBER:
+                st.error("✗ Signal not configured")
+            else:
+                with st.spinner("Sending Signal..."):
+                    try:
+                        from notifications.signal_sender import send_message as send_signal
+                        success = send_signal(message)
+                        if success:
+                            st.success("✓ Signal sent!")
+                        else:
+                            st.error("✗ Signal failed")
+                    except Exception as e:
+                        st.error(f"✗ Error: {e}")
+
+    st.markdown("---")
     st.markdown("### Manual Alert Check")
 
-    if st.button("Check Markets Now"):
+    if st.button("🔍 Check Markets Now"):
         with st.spinner("Checking markets..."):
             alerts = st.session_state.alert_engine.check_markets()
 
-        st.success(f"✓ Found {len(alerts)} alerts")
+        st.success(f"✓ Found {len(alerts)} alert{'s' if len(alerts) != 1 else ''}")
 
         if alerts:
-            if st.button("Send Alerts via WhatsApp"):
+            if st.button("📤 Send Alerts"):
                 from notifications import send_alerts
                 success = send_alerts(alerts, combine=True)
                 if success:
@@ -271,13 +851,33 @@ def show_test_panel():
                 else:
                     st.error("✗ Failed to send alerts")
 
+    st.markdown("---")
+    st.markdown("### System Information")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("**API Configuration:**")
+        st.text(f"Alpaca Markets: {'✓' if settings.ALPACA_API_KEY and settings.ALPACA_API_KEY != 'your_alpaca_api_key' else '✗'}")
+        st.text(f"Polygon.io: {'✓' if settings.POLYGON_API_KEY and settings.POLYGON_API_KEY != 'your_polygon_api_key' else '✗'}")
+        st.text(f"Yahoo Finance: {'✓' if settings.USE_YFINANCE else '✗'}")
+        st.text(f"Alpha Vantage: {'✓' if settings.ALPHA_VANTAGE_API_KEY and settings.ALPHA_VANTAGE_API_KEY != 'your_alpha_vantage_key' else '✗'}")
+        st.text(f"DeepSeek AI: {'✓' if settings.DEEPSEEK_API_KEY and settings.DEEPSEEK_API_KEY != 'your_deepseek_api_key' else '✗'}")
+
+    with col2:
+        st.markdown("**Notifications:**")
+        st.text(f"Email (Brevo): {'✓' if settings.BREVO_API_KEY else '✗'}")
+        st.text(f"Telegram: {'✓' if settings.TELEGRAM_BOT_TOKEN else '✗'}")
+        st.text(f"Signal: {'✓' if settings.SIGNAL_SENDER_NUMBER else '✗'}")
+        st.text(f"WhatsApp: {'✓' if settings.TWILIO_ACCOUNT_SID else '✗'}")
+
 
 # Main app
 def main():
     st.title("📊 Market Alerts Dashboard")
     st.markdown("---")
 
-    # Market status
+    # Market status (always visible)
     show_market_status()
     st.markdown("---")
 
@@ -287,7 +887,7 @@ def main():
 
         page = st.radio(
             "Select Page",
-            ["Overview", "Alerts", "News", "Charts", "Settings", "Test Panel"]
+            ["📊 Market Overview", "🤖 AI Evaluation (11 Indicators)", "📈 Analysis & Testing"]
         )
 
         st.markdown("---")
@@ -301,30 +901,55 @@ def main():
 
         st.markdown("---")
 
-        if st.button("🔄 Refresh Data"):
+        if st.button("🔄 Refresh Data", use_container_width=True):
             st.session_state.last_refresh = None
+            st.cache_data.clear()
             st.rerun()
 
+        st.caption("💡 Refresh clears cache and fetches fresh data")
+
     # Main content
-    if page == "Overview":
+    if page == "📊 Market Overview":
+        # Overview page: Watchlist + Alerts + News + AI
+
+        # Watchlist Summary
         show_watchlist_summary()
 
-    elif page == "Alerts":
-        show_alerts()
+        st.markdown("---")
 
-    elif page == "News":
-        show_news()
+        # Two columns for Alerts and News (displayed in parallel)
+        col1, col2 = st.columns([1, 1])
 
-    elif page == "Charts":
-        st.subheader("📈 Price Charts")
-        symbol = st.selectbox("Select Symbol", settings.WATCHLIST)
+        with col1:
+            show_alerts()
+
+        with col2:
+            show_news()
+
+    elif page == "🤖 AI Evaluation (11 Indicators)":
+        # AI Evaluation page with all 11 indicators
+        show_ai_evaluation_page()
+
+    elif page == "📈 Analysis & Testing":
+        # Analysis page: Charts + Technical Indicators + Test Panel
+
+        st.subheader("📈 Technical Analysis")
+
+        # Stock selector
+        symbol = st.selectbox("Select Symbol", settings.WATCHLIST, key="chart_selector")
+
         if symbol:
+            # Price chart
             show_price_chart(symbol)
 
-    elif page == "Settings":
-        show_settings()
+            st.markdown("---")
 
-    elif page == "Test Panel":
+            # Technical indicators
+            show_technical_indicators(symbol)
+
+            st.markdown("---")
+
+        # Test panel
         show_test_panel()
 
 

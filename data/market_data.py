@@ -8,6 +8,7 @@ import yfinance as yf
 from datetime import datetime, timedelta
 from config import settings
 from utils.logger import logger
+from utils.cache import get_cache
 
 
 class StockQuote:
@@ -53,7 +54,7 @@ class StockQuote:
 def get_stock_quote(symbol: str) -> Optional[StockQuote]:
     """
     Get current stock quote with intelligent fallback
-    Priority: Polygon.io > yfinance > Alpha Vantage
+    Priority: Alpaca > Polygon.io > yfinance > Alpha Vantage
 
     Args:
         symbol: Stock ticker symbol
@@ -62,7 +63,17 @@ def get_stock_quote(symbol: str) -> Optional[StockQuote]:
         StockQuote object or None if failed
     """
     try:
-        # First, try Polygon.io if configured (most reliable, no rate limits on paid plans)
+        # First, try Alpaca if configured (FREE unlimited data, no rate limits!)
+        if hasattr(settings, 'ALPACA_API_KEY') and settings.ALPACA_API_KEY and settings.ALPACA_API_KEY != 'your_alpaca_api_key':
+            logger.debug(f"Trying Alpaca for {symbol}...")
+            quote = _get_alpaca_quote(symbol)
+            if quote:
+                logger.debug(f"✓ Alpaca success for {symbol}")
+                return quote
+            else:
+                logger.info(f"Alpaca failed for {symbol}, trying fallbacks...")
+
+        # Try Polygon.io next if configured
         if hasattr(settings, 'POLYGON_API_KEY') and settings.POLYGON_API_KEY and settings.POLYGON_API_KEY != 'your_polygon_api_key':
             logger.debug(f"Trying Polygon.io for {symbol}...")
             quote = _get_polygon_quote(symbol)
@@ -90,6 +101,66 @@ def get_stock_quote(symbol: str) -> Optional[StockQuote]:
             return None
     except Exception as e:
         logger.error(f"Error fetching quote for {symbol}: {e}")
+        return None
+
+
+def _get_alpaca_quote(symbol: str) -> Optional[StockQuote]:
+    """Fetch quote using Alpaca Markets (FREE unlimited data)"""
+    try:
+        from alpaca.data.historical import StockHistoricalDataClient
+        from alpaca.data.requests import StockLatestQuoteRequest, StockSnapshotRequest
+
+        # Initialize Alpaca client (no trading, just data)
+        client = StockHistoricalDataClient(
+            api_key=settings.ALPACA_API_KEY,
+            secret_key=settings.ALPACA_SECRET_KEY
+        )
+
+        # Get latest snapshot (includes quote, trade, and daily bar)
+        request = StockSnapshotRequest(symbol_or_symbols=symbol)
+        snapshot = client.get_stock_snapshot(request)
+
+        if not snapshot or symbol not in snapshot:
+            logger.warning(f"No Alpaca data for {symbol}")
+            return None
+
+        snap_data = snapshot[symbol]
+
+        # Extract data from snapshot
+        latest_trade = snap_data.latest_trade
+        latest_quote = snap_data.latest_quote
+        daily_bar = snap_data.daily_bar
+        prev_daily_bar = snap_data.previous_daily_bar
+
+        # Use latest trade price as current price
+        current_price = float(latest_trade.price) if latest_trade else float(daily_bar.close) if daily_bar else 0
+        prev_close = float(prev_daily_bar.close) if prev_daily_bar else current_price
+
+        # Calculate change
+        change = current_price - prev_close
+        change_percent = (change / prev_close * 100) if prev_close else 0
+
+        # Get volume data
+        volume = int(daily_bar.volume) if daily_bar else 0
+        avg_volume = int(prev_daily_bar.volume) if prev_daily_bar else volume
+
+        # Convert Alpaca format to our format
+        quote_data = {
+            'regularMarketPrice': current_price,
+            'regularMarketChange': change,
+            'regularMarketChangePercent': change_percent,
+            'regularMarketVolume': volume,
+            'averageDailyVolume10Day': avg_volume,  # Using previous day as proxy
+            'regularMarketDayHigh': float(daily_bar.high) if daily_bar else current_price,
+            'regularMarketDayLow': float(daily_bar.low) if daily_bar else current_price,
+            'regularMarketPreviousClose': prev_close,
+            'marketCap': 0,  # Alpaca doesn't provide market cap in snapshot
+        }
+
+        return StockQuote(symbol, quote_data)
+
+    except Exception as e:
+        logger.error(f"Alpaca error for {symbol}: {e}")
         return None
 
 
@@ -233,7 +304,7 @@ def get_market_summary(symbols: Optional[List[str]] = None) -> Dict[str, StockQu
 
 def get_historical_data(symbol: str, period: str = "1mo") -> Optional[dict]:
     """
-    Get historical price data
+    Get historical price data with intelligent caching
 
     Args:
         symbol: Stock ticker symbol
@@ -242,11 +313,19 @@ def get_historical_data(symbol: str, period: str = "1mo") -> Optional[dict]:
     Returns:
         Dictionary with OHLCV data or None
     """
+    # Check cache first
+    cache = get_cache()
+    cached_data = cache.get('historical', symbol, period=period)
+    if cached_data is not None:
+        logger.info(f"Using cached historical data for {symbol} ({period})")
+        return cached_data
+
     try:
         if not settings.USE_YFINANCE:
             logger.warning("Historical data only available with yfinance")
             return None
 
+        logger.info(f"Fetching historical data for {symbol} ({period}) from API...")
         ticker = yf.Ticker(symbol)
         hist = ticker.history(period=period)
 
@@ -254,7 +333,7 @@ def get_historical_data(symbol: str, period: str = "1mo") -> Optional[dict]:
             logger.warning(f"No historical data for {symbol}")
             return None
 
-        return {
+        data = {
             'dates': hist.index.tolist(),
             'open': hist['Open'].tolist(),
             'high': hist['High'].tolist(),
@@ -262,6 +341,12 @@ def get_historical_data(symbol: str, period: str = "1mo") -> Optional[dict]:
             'close': hist['Close'].tolist(),
             'volume': hist['Volume'].tolist()
         }
+
+        # Cache the data
+        cache.set('historical', symbol, data, period=period)
+        logger.debug(f"Cached historical data for {symbol} ({period})")
+
+        return data
 
     except Exception as e:
         logger.error(f"Error fetching historical data for {symbol}: {e}")

@@ -7,6 +7,7 @@ import pandas as pd
 import numpy as np
 from typing import Dict, Optional, Tuple
 from utils.logger import logger
+from utils.cache import get_cache
 
 
 class TechnicalIndicators:
@@ -365,7 +366,7 @@ class TechnicalIndicators:
 
 def get_technical_analysis(symbol: str, period: str = '3mo') -> Dict:
     """
-    Get complete technical analysis for a symbol
+    Get complete technical analysis for a symbol with caching
 
     Args:
         symbol: Stock symbol
@@ -374,9 +375,17 @@ def get_technical_analysis(symbol: str, period: str = '3mo') -> Dict:
     Returns:
         Dictionary with indicators and analysis
     """
+    # Check cache first
+    cache = get_cache()
+    cached_analysis = cache.get('technical', symbol, period=period)
+    if cached_analysis is not None:
+        logger.info(f"Using cached technical analysis for {symbol} ({period})")
+        return cached_analysis
+
     try:
         import yfinance as yf
 
+        logger.info(f"Calculating technical indicators for {symbol} ({period}) from API...")
         # Fetch historical data
         ticker = yf.Ticker(symbol)
         df = ticker.history(period=period)
@@ -392,6 +401,10 @@ def get_technical_analysis(symbol: str, period: str = '3mo') -> Dict:
         analysis['symbol'] = symbol
         analysis['current_price'] = df['Close'].iloc[-1]
         analysis['data_points'] = len(df)
+
+        # Cache the analysis
+        cache.set('technical', symbol, analysis, period=period)
+        logger.debug(f"Cached technical analysis for {symbol} ({period})")
 
         return analysis
 
